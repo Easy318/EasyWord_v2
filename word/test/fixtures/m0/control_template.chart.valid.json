@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1.0",
+  "controlId": 2,
+  "controlTag": "eai:chart",
+  "type": "chart",
+  "gridSnapshot": {
+    "rows": [["", "A"], ["1", "10"]],
+    "sheetName": "Sheet1"
+  },
+  "cellBindings": [
+    {
+      "row": 0,
+      "col": 1,
+      "refName": "a1"
+    }
+  ]
+}

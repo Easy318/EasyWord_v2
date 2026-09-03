@@ -1,0 +1,26 @@
+---
+description: EasyWord 项目约定
+alwaysApply: true
+---
+
+# EasyWord
+
+本地 Word / 数据分析 sidecar（FastAPI）。无用户登录。
+
+## 目录约定
+
+| 路径 | 职责 |
+| --- | --- |
+| `word/core/{feature}/` | 核心业务：同模块内 `router/`、`schema/` + 业务实现 |
+| `word/runtime/` | Word COM：STA host、Application、文档路径绑定（无 HTTP） |
+| `word/router.py` | `register_router` 集中挂载各模块 `*_api` |
+| `word/config/` | 常量、settings、路径 |
+| `word/test/` | 可行性试验；不作为发布契约 |
+
+新增功能：在 `core/` 下建模块并导出 `*_api`，再在 `register_router` 中 `include_router`；废弃时移除该模块与注册即可。
+
+## 与净流客户端
+
+- 仅本机 HTTP（默认 `127.0.0.1:18765`）
+- 不接收长期 JWT；不直连 QHub 拉受权数据
+- 客户端生产态托管进程；开发态人工启停

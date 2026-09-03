@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "1.0",
+  "controlId": 1,
+  "controlTag": "eai:text",
+  "type": "text",
+  "jinjaTemplate": "{{ burst_var }} {{ report_year }} 销售额为 {{ a1 }}"
+}

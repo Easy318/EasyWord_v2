@@ -1,0 +1,6 @@
+# EasyWord 依赖（开发、运行、打包共用；请在项目 .venv 中使用）
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+pandas
+pywin32
+jinja2>=3.1.5

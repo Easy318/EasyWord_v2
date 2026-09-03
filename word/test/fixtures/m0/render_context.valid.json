@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "1.0",
+  "projectId": "proj-demo",
+  "burst": { "varName": "province", "value": "广东省" },
+  "entries": {
+    "a1": {
+      "value": 123.4,
+      "dtype": "float",
+      "shape": null,
+      "source": "flow",
+      "status": "active"
+    },
+    "report_year": {
+      "value": 2025,
+      "dtype": "int",
+      "shape": null,
+      "source": "projectConst",
+      "status": "active"
+    }
+  }
+}

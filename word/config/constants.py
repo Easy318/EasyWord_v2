@@ -1,0 +1,9 @@
+"""应用级常量与契约版本。"""
+
+# 与纯流客户端 EXPECTED_API_VERSION 对齐；不兼容变更时递增
+EASYWORD_API_VERSION = 1
+
+SERVICE_NAME = "EasyWord"
+
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 18765
