@@ -10,6 +10,7 @@ from word.core.document.schema import (
     DocumentFinalizeIn,
     DocumentOpenIn,
     DocumentOpenOut,
+    DocumentPersistIn,
     DocumentStatusOut,
     OkOut,
 )
@@ -26,6 +27,13 @@ def open_document(body: DocumentOpenIn) -> DocumentOpenOut:
 @document_api.post("/save", response_model=OkOut)
 def save_document() -> OkOut:
     service.save_document()
+    return OkOut()
+
+
+@document_api.post("/persist", response_model=OkOut)
+def persist_document(body: DocumentPersistIn) -> OkOut:
+    """按路径落盘且保持打开（批量生成前同步；不依赖绑定状态）。"""
+    service.persist_document(body.templatePath)
     return OkOut()
 
 

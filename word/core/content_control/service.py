@@ -74,6 +74,12 @@ def create_control(
         except Exception as exc:  # noqa: BLE001
             raise EasyWordError("create_failed", f"创建内容控件失败: {exc}", status_code=500) from exc
 
+        if resolved == ControlType.text:
+            try:
+                cc.MultiLine = True
+            except Exception:  # noqa: BLE001
+                pass
+
         use_tag = (tag or "").strip() or default_tag(resolved)
         use_title = (title or "").strip() or resolved.value
         try:

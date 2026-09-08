@@ -3,6 +3,7 @@ from word.core.document.schema.document import (
     DocumentFinalizeIn,
     DocumentOpenIn,
     DocumentOpenOut,
+    DocumentPersistIn,
     DocumentStatusOut,
     OkOut,
 )
@@ -12,6 +13,7 @@ __all__ = [
     "DocumentFinalizeIn",
     "DocumentOpenIn",
     "DocumentOpenOut",
+    "DocumentPersistIn",
     "DocumentStatusOut",
     "OkOut",
 ]

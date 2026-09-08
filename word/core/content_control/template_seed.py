@@ -6,8 +6,7 @@ from typing import Any
 
 from word.core.content_control.chart_workbook import (
     map_chart_com_error,
-    open_chart_sheet,
-    release_chart_workbook,
+    chart_sheet_session,
 )
 from word.core.content_control.constants import ControlType
 from word.core.content_control.selection_guard import find_control_by_id
@@ -76,26 +75,23 @@ def _read_chart_grid(rng: Any) -> tuple[list[list[str]], str | None]:
     if chart is None:
         raise EasyWordError("no_chart", "控件内未找到图表，无法读取数据网格")
 
-    wb: Any = None
     try:
-        _chart_data, wb, ws, used = open_chart_sheet(chart)
-        row_count = int(used.Rows.Count)
-        col_count = int(used.Columns.Count)
-        rows: list[list[str]] = []
-        for r in range(1, row_count + 1):
-            row: list[str] = []
-            for c in range(1, col_count + 1):
-                val = used.Cells(r, c).Value
-                row.append(_cell_value_to_str(val))
-            rows.append(row)
-        sheet_name = str(ws.Name or "")
-        return rows, sheet_name or None
+        with chart_sheet_session(chart, sync_visual=False) as (_chart_data, _wb, ws, used):
+            row_count = int(used.Rows.Count)
+            col_count = int(used.Columns.Count)
+            rows: list[list[str]] = []
+            for r in range(1, row_count + 1):
+                row: list[str] = []
+                for c in range(1, col_count + 1):
+                    val = used.Cells(r, c).Value
+                    row.append(_cell_value_to_str(val))
+                rows.append(row)
+            sheet_name = str(ws.Name or "")
+            return rows, sheet_name or None
     except EasyWordError:
         raise
     except Exception as exc:  # noqa: BLE001
         raise map_chart_com_error(exc, action="读取图表数据") from exc
-    finally:
-        release_chart_workbook(wb, chart)
 
 
 def extract_template_seed(info: Any) -> dict[str, object]:

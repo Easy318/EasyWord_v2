@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from jinja2 import Environment, TemplateSyntaxError, UndefinedError
 
 from word.core.content_control.chart_workbook import (
+    chart_sheet_session,
     map_chart_com_error,
-    open_chart_sheet,
-    release_chart_workbook,
 )
 from word.core.content_control.constants import ControlType
 from word.core.content_control.selection_guard import find_control_by_id
@@ -43,7 +43,12 @@ def _jinja_fmt(value: Any, places: int = 2) -> str:
     return fmt_number(value, places)
 
 
-_JINJA_ENV = Environment(autoescape=False, finalize=_jinja_finalize)
+_JINJA_ENV = Environment(
+    autoescape=False,
+    finalize=_jinja_finalize,
+    trim_blocks=True,
+    lstrip_blocks=True,
+)
 _JINJA_ENV.filters["fmt"] = _jinja_fmt
 
 
@@ -77,17 +82,61 @@ def _resolve_ref_value(ctx: RenderContext, ref_name: str) -> Any:
     return item.value
 
 
+def _normalize_rendered_text(text: str) -> str:
+    """统一换行、去掉行尾空白；trim_blocks 之外再压掉多余空行。"""
+    t = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    t = "\n".join(line.rstrip() for line in t.split("\n"))
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip("\n")
+
+
 def _render_jinja(source: str, ctx: RenderContext) -> str:
     try:
-        return _JINJA_ENV.from_string(source).render(**_build_jinja_context(ctx))
+        raw = _JINJA_ENV.from_string(source).render(**_build_jinja_context(ctx))
     except TemplateSyntaxError as exc:
         raise EasyWordError("jinja_syntax", f"模板语法错误: {exc}") from exc
     except UndefinedError as exc:
         raise EasyWordError("jinja_undefined", f"模板变量未定义: {exc}") from exc
+    return _normalize_rendered_text(raw)
 
 
 def _write_text_control(cc: Any, text: str) -> None:
-    cc.Range.Text = text
+    # 纯文本 SDT 只能单段：多行必须用软换行 Chr(11)=\v（对齐 OOXML <w:br/>）。
+    # 用 \r 会插入非法多段，常导致数字旁缺字形方框，保存后才被 Word 纠正。
+    normalized = _normalize_rendered_text(text).replace("\n", "\v")
+    try:
+        cc.MultiLine = True
+    except Exception:
+        pass
+
+    rng = cc.Range
+    prev_fe = ""
+    prev_ascii = ""
+    try:
+        prev_fe = str(rng.Font.NameFarEast or "").strip()
+        prev_ascii = str(rng.Font.NameAscii or "").strip()
+    except Exception:
+        pass
+
+    rng.Text = normalized
+
+    # Text 赋值会打乱 run 字体；按写前字体恢复，缺省用宋体/TNR
+    try:
+        rng = cc.Range
+        font = rng.Font
+        font.NameFarEast = prev_fe or "宋体"
+        font.NameAscii = prev_ascii or "Times New Roman"
+        try:
+            font.NameOther = prev_ascii or "Times New Roman"
+        except Exception:
+            pass
+    except Exception:
+        pass
+    try:
+        rng.LanguageID = 2052  # wdSimplifiedChinese
+        rng.LanguageIDFarEast = 2052
+    except Exception:
+        pass
 
 
 def _write_table_cell(rng: Any, row: int, col: int, value: Any) -> None:
@@ -121,32 +170,29 @@ def _collect_grid_updates(
 
 
 def _write_chart_grid(rng: Any, updates: list[tuple[int, int, Any]]) -> None:
-    """单次打开 ChartData.Workbook，批量写格后尽量释放。"""
+    """单次打开 ChartData.Workbook，批量写格，关簿前重绑 Word 图表面缓存。"""
     if not updates:
         return
     chart = _find_chart_in_range(rng)
     if chart is None:
         raise EasyWordError("no_chart", "控件内未找到图表")
 
-    wb: Any = None
     try:
-        _chart_data, wb, _ws, used = open_chart_sheet(chart)
-        max_r = int(used.Rows.Count)
-        max_c = int(used.Columns.Count)
-        for row_idx, col_idx, value in updates:
-            r, c = row_idx + 1, col_idx + 1
-            if r > max_r or c > max_c:
-                raise EasyWordError(
-                    "cell_out_of_range",
-                    f"单元格 ({row_idx},{col_idx}) 超出图表数据范围",
-                )
-            used.Cells(r, c).Value = value
+        with chart_sheet_session(chart) as (_chart_data, _wb, _ws, used):
+            max_r = int(used.Rows.Count)
+            max_c = int(used.Columns.Count)
+            for row_idx, col_idx, value in updates:
+                r, c = row_idx + 1, col_idx + 1
+                if r > max_r or c > max_c:
+                    raise EasyWordError(
+                        "cell_out_of_range",
+                        f"单元格 ({row_idx},{col_idx}) 超出图表数据范围",
+                    )
+                used.Cells(r, c).Value = value
     except EasyWordError:
         raise
     except Exception as exc:  # noqa: BLE001
         raise map_chart_com_error(exc, action="写入图表数据") from exc
-    finally:
-        release_chart_workbook(wb, chart)
 
 
 def _apply_grid_cells(

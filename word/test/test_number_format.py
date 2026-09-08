@@ -54,3 +54,20 @@ def test_render_jinja_fmt_and_round() -> None:
     assert _render_jinja("{{ (b1 - a1)|fmt(2) }}", ctx) == "0.25"
     assert _render_jinja("{{ (b1 - a1)|round(2) }}", ctx) == "0.25"
     assert _render_jinja("{{ a1|fmt(2) }}", ctx) == "1.97"
+
+
+def test_render_jinja_trim_blocks_no_extra_blank_lines() -> None:
+    ctx = _ctx(a1=19.47, a2=18.33)
+    src = (
+        "均分为 {{ a1 }} 与 {{ a2 }}。\n"
+        "{% set score_diff = a1 - a2 %}\n"
+        "{% if score_diff > 0 %}\n"
+        "女生平均分高于男生{{ '%.2f'|format(score_diff) }}分。\n"
+        "{% elif score_diff < 0 %}\n"
+        "男生平均分高于女生{{ '%.2f'|format(-score_diff) }}分。\n"
+        "{% else %}\n"
+        "男女生平均分相同。\n"
+        "{% endif %}\n"
+    )
+    out = _render_jinja(src, ctx)
+    assert out == "均分为 19.47 与 18.33。\n女生平均分高于男生1.14分。"

@@ -24,6 +24,10 @@ class DocumentFinalizeIn(BaseModel):
     templatePath: str = Field(min_length=1, description="本机模板绝对路径")
 
 
+class DocumentPersistIn(BaseModel):
+    templatePath: str = Field(min_length=1, description="本机模板绝对路径")
+
+
 class DocumentStatusOut(BaseModel):
     bound: bool
     projectId: str | None = None

@@ -18,6 +18,11 @@ def close_document(save: bool = True) -> None:
     com_host.submit(lambda: document_binding.close(save=save))
 
 
+def persist_document(template_path: str) -> None:
+    """按路径落盘，不关闭文档。"""
+    com_host.submit(lambda: document_binding.persist_by_path(template_path))
+
+
 def finalize_document(template_path: str) -> None:
     com_host.submit(lambda: document_binding.finalize_by_path(template_path))
 

@@ -99,26 +99,34 @@ class DocumentBinding:
         if not Path(path).is_file():
             raise EasyWordError("file_not_found", f"模板文件不存在: {template_path}", status_code=404)
 
-        app = word_app.ensure_app()
         rebound = False
 
+        # 先处理旧绑定：切项目/换路径时尽量落盘关闭；文档已不在则软清状态。
+        # 注意：不可先 ensure_app，否则空 Word 会被当成「有实例但缺文档」而误报 409。
         if self._state is not None:
             old = self._state
-            if old.project_id == project_id and normalize_path(old.template_path) == path:
-                doc = self.find_document_by_path(app, path)
-                if doc is not None:
-                    doc.Activate()
-                    snap_word_to_left_half(app)
-                    rebound = True
-                    return {
-                        "projectId": project_id,
-                        "templatePath": path,
-                        "rebound": rebound,
-                    }
+            same = (
+                old.project_id == project_id and normalize_path(old.template_path) == path
+            )
+            if same:
+                app_existing = word_app.try_app()
+                if app_existing is not None:
+                    doc = self._find_document_by_template_path(app_existing, path)
+                    if doc is not None:
+                        doc.Activate()
+                        snap_word_to_left_half(app_existing)
+                        return {
+                            "projectId": project_id,
+                            "templatePath": path,
+                            "rebound": True,
+                        }
+                # 同路径但文档已关：清状态后重新 Open
+                self._state = None
             else:
                 self._close_bound(save=True)
 
-        doc = self.find_document_by_path(app, path)
+        app = word_app.ensure_app()
+        doc = self._find_document_by_template_path(app, path)
         if doc is not None:
             doc.Activate()
             rebound = True
@@ -156,14 +164,7 @@ class DocumentBinding:
             return
         app = word_app.try_app()
         if app is not None:
-            doc = self.find_document_by_path(app, state.template_path)
-            if doc is None:
-                try:
-                    active = app.ActiveDocument
-                    if active is not None and paths_equal(str(active.FullName), state.template_path):
-                        doc = active
-                except Exception:  # noqa: BLE001
-                    pass
+            doc = self._find_document_by_template_path(app, state.template_path)
             if doc is not None:
                 if save:
                     self._save_document_to_template(doc, state.template_path)
@@ -173,7 +174,11 @@ class DocumentBinding:
                 except Exception as exc:  # noqa: BLE001
                     raise EasyWordError("close_failed", f"关闭文档失败: {exc}", status_code=500) from exc
             elif save:
-                raise EasyWordError("document_missing", "绑定文档已不在 Word 中打开，无法保存关闭", status_code=409)
+                # 文档已被用户关掉或绑定已过期：无法再保存，清状态即可，勿阻塞换绑/打开
+                _log.warning(
+                    "Bound document missing on close(save=True); clearing state without save "
+                    f"path={state.template_path}"
+                )
             word_app.quit_if_no_documents()
         self._state = None
         _log.info("Document unbound")
@@ -203,6 +208,31 @@ class DocumentBinding:
             "documentOpen": document_open,
         }
 
+    def _find_document_by_template_path(self, app: Any, path: str) -> Any | None:
+        """按规范化路径查找已打开文档（含 ActiveDocument 兜底）。"""
+        doc = self.find_document_by_path(app, path)
+        if doc is not None:
+            return doc
+        try:
+            active = app.ActiveDocument
+            if active is not None and paths_equal(str(active.FullName), path):
+                return active
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
+    def persist_by_path(self, template_path: str) -> None:
+        """按模板路径落盘，保持文档打开（批量生成前同步用；不依赖内存绑定）。"""
+        path = normalize_path(template_path)
+        app = word_app.try_app()
+        if app is None:
+            return
+        doc = self._find_document_by_template_path(app, path)
+        if doc is None:
+            return
+        self._save_document_to_template(doc, path)
+        _log.info(f"Persisted document by path (kept open): {path}")
+
     def finalize_by_path(self, template_path: str) -> None:
         """按模板路径保存并关闭 Word 文档（不依赖内存绑定，用于退出/热重载后落盘）。"""
         path = normalize_path(template_path)
@@ -212,15 +242,7 @@ class DocumentBinding:
                 self._state = None
             return
 
-        doc = self.find_document_by_path(app, path)
-        if doc is None:
-            try:
-                active = app.ActiveDocument
-                if active is not None and paths_equal(str(active.FullName), path):
-                    doc = active
-            except Exception:  # noqa: BLE001
-                pass
-
+        doc = self._find_document_by_template_path(app, path)
         if doc is not None:
             self._save_document_to_template(doc, path)
             try:
