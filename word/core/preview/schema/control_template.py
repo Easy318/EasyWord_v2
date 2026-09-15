@@ -22,9 +22,21 @@ class TextControlTemplate(_ControlBase):
     jinja_template: str = Field(..., alias="jinjaTemplate")
 
 
+class GridMerge(BaseModel):
+    """逻辑网格上的合并锚点（0-based）；仅 table 使用。"""
+
+    row: int = Field(..., ge=0)
+    col: int = Field(..., ge=0)
+    row_span: int = Field(..., ge=1, alias="rowSpan")
+    col_span: int = Field(..., ge=1, alias="colSpan")
+
+    model_config = CAMEL_CONFIG
+
+
 class GridSnapshot(BaseModel):
     rows: list[list[str]] = Field(default_factory=list)
     sheet_name: str | None = Field(None, alias="sheetName")
+    merges: list[GridMerge] = Field(default_factory=list)
 
     model_config = CAMEL_CONFIG
 

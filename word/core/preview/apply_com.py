@@ -17,6 +17,7 @@ from word.core.content_control.template_seed import (
     _cell_value_to_str,
     _find_chart_in_range,
 )
+from word.core.preview.grid_merge import is_covered, physical_cell_index
 from word.core.preview.number_format import clean_float_str, fmt_number
 from word.core.preview.schema.common import JINJA_RESERVED_NAMES
 from word.core.preview.schema.control_template import (
@@ -139,35 +140,86 @@ def _write_text_control(cc: Any, text: str) -> None:
         pass
 
 
-def _write_table_cell(rng: Any, row: int, col: int, value: Any) -> None:
-    if int(rng.Tables.Count) == 0:
-        raise EasyWordError("no_table", "控件内未找到表格")
-    table = rng.Tables.Item(1)
-    r, c = row + 1, col + 1
-    if r > int(table.Rows.Count) or c > int(table.Columns.Count):
-        raise EasyWordError("cell_out_of_range", f"单元格 ({row},{col}) 超出表格范围")
-    table.Cell(r, c).Range.Text = _cell_value_to_str(value)
-
-
 def _collect_grid_updates(
     rows: list[list[str]],
     bindings: list,
     ctx: RenderContext,
+    merges: list | None = None,
 ) -> list[tuple[int, int, Any]]:
-    """收集待写单元格（0-based row/col）。"""
+    """收集待写单元格（0-based row/col）。
+
+    - 合并覆盖位跳过（不写）
+    - 有 ref 绑定：写解析值（可为空）
+    - 无绑定：写 snapshot（含空串，表示清空；覆盖位空串仍跳过）
+    """
     binding_map = {(b.row, b.col): b.ref_name for b in bindings if b.ref_name}
     updates: list[tuple[int, int, Any]] = []
     for row_idx, row in enumerate(rows):
         for col_idx, snapshot_val in enumerate(row):
+            if is_covered(row_idx, col_idx, merges):
+                if binding_map.get((row_idx, col_idx)):
+                    raise EasyWordError(
+                        "merged_cell_covered",
+                        f"cellBindings 不能落在合并覆盖位 ({row_idx},{col_idx})",
+                    )
+                continue
             ref_name = binding_map.get((row_idx, col_idx))
             if ref_name:
                 updates.append((row_idx, col_idx, _resolve_ref_value(ctx, ref_name)))
             else:
-                if snapshot_val is None or str(snapshot_val).strip() == "":
+                # None 视为未提供该列（短行），跳过；空串表示用户清空，要写回
+                if snapshot_val is None:
                     continue
                 updates.append((row_idx, col_idx, snapshot_val))
     return updates
 
+
+def _set_word_cell_text(cell: Any, value: Any) -> None:
+    """写入单元格文本；空串清空内容但保留单元格结束标记。"""
+    text = _cell_value_to_str(value)
+    rng = cell.Range
+    try:
+        # Range 含末尾 \r\a；缩一格再赋值，避免拆坏表格结构
+        if int(rng.End) > int(rng.Start):
+            rng.MoveEnd(1, -1)  # wdCharacter
+        rng.Text = text
+    except Exception:  # noqa: BLE001
+        cell.Range.Text = text
+
+
+def _write_table_cell(
+    rng: Any,
+    row: int,
+    col: int,
+    value: Any,
+    merges: list | None = None,
+    row_count: int | None = None,
+    col_count: int | None = None,
+) -> None:
+    """按逻辑格写入。横合表里 Word.Cell(r,c) 的 c 是物理序号，必须映射到 Range.Cells。"""
+    if int(rng.Tables.Count) == 0:
+        raise EasyWordError("no_table", "控件内未找到表格")
+    table = rng.Tables.Item(1)
+    n_rows = row_count if row_count is not None else int(table.Rows.Count)
+    n_cols = col_count if col_count is not None else int(table.Columns.Count)
+    if row < 0 or col < 0 or row >= n_rows or col >= n_cols:
+        raise EasyWordError("cell_out_of_range", f"单元格 ({row},{col}) 超出表格范围")
+    if is_covered(row, col, merges):
+        raise EasyWordError(
+            "merged_cell_covered",
+            f"单元格 ({row},{col}) 为合并覆盖位，无法写入；请写合并锚点",
+        )
+    try:
+        idx = physical_cell_index(row, col, n_rows, n_cols, merges)
+        cell = table.Range.Cells.Item(idx)
+    except EasyWordError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise EasyWordError(
+            "merged_cell_covered",
+            f"单元格 ({row},{col}) 无法定位物理格，无法写入",
+        ) from exc
+    _set_word_cell_text(cell, value)
 
 def _write_chart_grid(rng: Any, updates: list[tuple[int, int, Any]]) -> None:
     """单次打开 ChartData.Workbook，批量写格，关簿前重绑 Word 图表面缓存。"""
@@ -201,10 +253,23 @@ def _apply_grid_cells(
     bindings: list,
     ctx: RenderContext,
     write_fn,
+    merges: list | None = None,
 ) -> None:
     """表格：逐格写入手写/引用值。"""
-    for row_idx, col_idx, value in _collect_grid_updates(rows, bindings, ctx):
-        write_fn(rng, row_idx, col_idx, value)
+    n_rows = len(rows)
+    n_cols = max((len(r) for r in rows), default=0)
+    for row_idx, col_idx, value in _collect_grid_updates(
+        rows, bindings, ctx, merges=merges
+    ):
+        write_fn(
+            rng,
+            row_idx,
+            col_idx,
+            value,
+            merges=merges,
+            row_count=n_rows,
+            col_count=n_cols,
+        )
 
 
 def _apply_template(template: ControlTemplate, ctx: RenderContext) -> None:
@@ -219,12 +284,14 @@ def _apply_template(template: ControlTemplate, ctx: RenderContext) -> None:
         return
 
     if isinstance(template, TableControlTemplate):
+        merges = list(template.grid_snapshot.merges or [])
         _apply_grid_cells(
             rng,
             template.grid_snapshot.rows,
             template.cell_bindings,
             ctx,
             _write_table_cell,
+            merges=merges,
         )
         return
 
